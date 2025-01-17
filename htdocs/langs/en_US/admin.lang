@@ -1388,6 +1388,7 @@ ExtraFieldsSupplierOrders=Complementary attributes (orders)
 ExtraFieldsSupplierInvoices=Complementary attributes (invoices)
 ExtraFieldsProject=Complementary attributes (projects)
 ExtraFieldsProjectTask=Complementary attributes (tasks)
+ExtraFieldsTimeSpent=Complementary attributes (Time spent)
 ExtraFieldsSalaries=Complementary attributes (salaries)
 ExtraFieldHasWrongValue=Attribute %s has a wrong value.
 AlphaNumOnlyLowerCharsAndNoSpace=only alphanumericals and lower case characters without space

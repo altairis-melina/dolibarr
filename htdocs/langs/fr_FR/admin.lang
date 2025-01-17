@@ -1385,6 +1385,7 @@ ExtraFieldsSupplierOrders=Attributs supplémentaires (commandes)
 ExtraFieldsSupplierInvoices=Attributs supplémentaires (factures)
 ExtraFieldsProject=Attributs supplémentaires (projets)
 ExtraFieldsProjectTask=Attributs supplémentaires (tâches)
+ExtraFieldsTimeSpent=Attributs supplémentaires (Temps consommé)
 ExtraFieldsSalaries=Attributs complémentaires (salaires)
 ExtraFieldHasWrongValue=L'attribut %s a une valeur incorrecte.
 AlphaNumOnlyLowerCharsAndNoSpace=uniquement des caractères alphanumériques et en minuscule sans espace

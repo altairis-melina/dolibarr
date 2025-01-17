@@ -343,7 +343,10 @@ UseProductFournDesc=Add a feature to define the product description defined by t
 ProductSupplierDescription=Vendor description for the product
 UseProductSupplierPackaging=Use the "packaging" feature to round the quantities to some given multiples (when adding/updating line in a vendor documents, recalculate quantities and purchase prices according to the higher multiple set on the purchase prices of a product)
 PackagingForThisProduct=Packaging of quantities
+UseProductCustomerPackaging=Use the "packaging" feature to round the quantities to some given multiples (when adding/updating line in a customer documents, recalculate quantities and sale prices according to the higher multiple set on the sale prices of a product)
+PackagingForThisProduct=Packaging of quantities
 PackagingForThisProductDesc=You will automatically purchase a multiple of this quantity.
+PackagingForThisProductSellDesc=You will automatically sell a multiple of this quantity.
 QtyRecalculatedWithPackaging=The quantity of the line were recalculated according to supplier packaging
 
 #Attributes
