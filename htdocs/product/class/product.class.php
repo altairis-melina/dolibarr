@@ -236,7 +236,10 @@ class Product extends CommonObject
 	 * @var array<int,int>
 	 */
 	public $multiprices_recuperableonly = array();
-
+	/**
+	 * @var array<int,null|int|float|string>
+	 */
+	public $multiprices_array_options = array();
 	//! Price by quantity arrays
 	/**
 	 * @var int<0,0>|float
@@ -3275,11 +3278,18 @@ class Product extends CommonObject
 				// Load multiprices array
 				if ((getDolGlobalString('PRODUIT_MULTIPRICES') || getDolGlobalString('PRODUIT_CUSTOMER_PRICES_AND_MULTIPRICES')) && empty($ignore_price_load)) {                // prices per segment
 					$produit_multiprices_limit = getDolGlobalInt('PRODUIT_MULTIPRICES_LIMIT');
+					// $extrafields = new ExtraFields($this->db);
+					// $extrafields->fetch_name_optionals_label('product_price');
 					for ($i = 1; $i <= $produit_multiprices_limit; $i++) {
-						$sql = "SELECT price, price_ttc, price_min, price_min_ttc,";
-						$sql .= " price_base_type, tva_tx, default_vat_code, tosell, price_by_qty, rowid, recuperableonly";
-						$sql .= " ,price_label";
-						$sql .= " FROM ".$this->db->prefix()."product_price";
+						$sql = "SELECT ps.price, ps.price_ttc, ps.price_min, ps.price_min_ttc,";
+						$sql .= " ps.price_base_type, ps.tva_tx, ps.default_vat_code, ps.tosell, ps.price_by_qty, ps.rowid, ps.recuperableonly";
+						$sql .= " , ps.price_label";
+						foreach ($extrafields->attributes['product_price']['label'] as $key => $val) {
+   							$sql .= ", ppe.".$key;
+						}
+						$sql .= " FROM ".$this->db->prefix()."product_price as ps";
+						// $sql .= " LEFT JOIN ".$this->db->prefix()."product_price_extrafields as ppe";
+						// $sql .= " ON ppe.fk_object = ps.rowid";
 						$sql .= " WHERE entity IN (".getEntity('productprice').")";
 						$sql .= " AND price_level=".((int) $i);
 						$sql .= " AND fk_product = ".((int) $this->id);
@@ -3297,6 +3307,11 @@ class Product extends CommonObject
 							// Next two fields are used only if PRODUIT_MULTIPRICES_USE_VAT_PER_LEVEL is on
 							$this->multiprices_tva_tx[$i] = $result ? $result["tva_tx"].(!empty($result['default_vat_code']) ? ' ('.$result['default_vat_code'].')' : '') : null;
 							$this->multiprices_recuperableonly[$i] = $result ? $result["recuperableonly"] : null;
+
+							// $this->multiprices_array_options[$i] = array();
+							// foreach ($extrafields->attributes['product_price']['label'] as $key => $val) {
+    						// 	$this->multiprices_array_options[$i]['options_'.$key] = $result ? $result[$key] : null;
+							// }
 
 							// Price by quantity
 							/*
@@ -5416,7 +5431,7 @@ class Product extends CommonObject
 
 		$this->db->begin();
 
-		// prices
+		// Default selling price and price levels
 		$sql  = "INSERT INTO ".$this->db->prefix()."product_price (";
 		$sql .= " entity";
 		$sql .= ", fk_product";
@@ -5473,7 +5488,7 @@ class Product extends CommonObject
 		$sql .= ", multicurrency_price";
 		$sql .= ", multicurrency_price_ttc";
 		$sql .= " FROM ".$this->db->prefix()."product_price ps";
-		$sql .= " WHERE fk_product = ".((int) $fromId);
+		$sql .= " WHERE ps.fk_product = ".((int) $fromId);
 		$sql .= " AND date_price IN (SELECT MAX(pd.date_price) FROM ".$this->db->prefix()."product_price pd WHERE pd.fk_product = ".((int) $fromId)." AND pd.price_level = ps.price_level)";
 		$sql .= " ORDER BY date_price DESC";
 
@@ -5482,6 +5497,377 @@ class Product extends CommonObject
 		if (!$resql) {
 			$this->db->rollback();
 			return -1;
+		}
+		$this->db->free($resql);
+
+		if (getDolGlobalString('PRODUIT_MULTIPRICES') || getDolGlobalString('PRODUIT_CUSTOMER_PRICES')) {
+			// Add of level price extrafields
+			if (getDolGlobalString('PRODUIT_MULTIPRICES')) {
+				// fetch optionals attributes and labels
+				require_once DOL_DOCUMENT_ROOT . '/core/class/extrafields.class.php';
+				$extrafields = new ExtraFields($this->db);
+				$extrafields->fetch_name_optionals_label($object->table_element);
+
+				// Retrieving the list of extrafields
+				$sql_fields = "SHOW COLUMNS FROM ".MAIN_DB_PREFIX."product_price_extrafields";
+				$res_fields = $this->db->query($sql_fields);
+				if (!$res_fields) {
+					$this->db->rollback();
+					return -1;
+				}
+				$fields = array();
+				while ($field = $this->db->fetch_object($res_fields)) {
+					if (!in_array($field->Field, array('rowid', 'tms', 'fk_object'))) {
+						$fields[] = $field->Field;
+					}
+				}
+				if (!empty($fields)) {
+					if (!empty($extrafields)) {
+						// Matching old price, new price
+						$sql  = "SELECT";
+						$sql .= " oldp.rowid AS old_price_id,";
+						$sql .= " newp.rowid AS new_price_id";
+						$sql .= " FROM ".MAIN_DB_PREFIX."product_price AS oldp";
+						$sql .= " INNER JOIN ".MAIN_DB_PREFIX."product_price AS newp";
+						$sql .= " ON newp.price_level = oldp.price_level";
+						$sql .= " WHERE oldp.fk_product = ".((int) $fromId);
+						$sql .= " AND newp.fk_product = ".((int) $toId);
+						$sql .= " AND newp.date_price = '".$this->db->idate($now)."'";
+						$resql = $this->db->query($sql);
+						if (!$resql) {
+							$this->db->rollback();
+							return -1;
+						}
+						while ($obj = $this->db->fetch_object($resql)) {
+							$sql_copy  = "INSERT INTO ".MAIN_DB_PREFIX."product_price_extrafields";
+							$sql_copy .= " (fk_object";
+							foreach ($fields as $field) {
+								$sql_copy .= ",".$field;
+							}
+							$sql_copy .= ")";
+							$sql_copy .= " SELECT ";
+							$sql_copy .= ((int) $obj->new_price_id);
+							foreach ($fields as $field) {
+								$sql_copy .= ",".$field;
+							}
+							$sql_copy .= " FROM ".MAIN_DB_PREFIX."product_price_extrafields";
+							$sql_copy .= " WHERE fk_object = ".((int) $obj->old_price_id);
+							$resql_copy = $this->db->query($sql_copy);
+							if (!$resql_copy) {
+								$this->db->rollback();
+								return -1;
+							}
+						}
+
+						$this->db->free($resql);
+						$this->db->free($resql_copy);
+					}
+				}
+
+				$this->db->free($res_fields);
+			}
+
+			// Price per customer
+			if (getDolGlobalString('PRODUIT_CUSTOMER_PRICES')) {
+				$sql  = "INSERT INTO ".$this->db->prefix()."product_customer_price (";
+				$sql .= " entity";
+				$sql .= ", fk_product";
+				$sql .= ", fk_soc";
+				$sql .= ", datec";
+				$sql .= ", price";
+				$sql .= ", price_ttc";
+				$sql .= ", price_min";
+				$sql .= ", price_min_ttc";
+				$sql .= ", price_base_type";
+				$sql .= ", default_vat_code";
+				$sql .= ", tva_tx";
+				$sql .= ", recuperableonly";
+				$sql .= ", localtax1_tx";
+				$sql .= ", localtax1_type";
+				$sql .= ", localtax2_tx";
+				$sql .= ", localtax2_type";
+				$sql .= ", fk_user";
+				$sql .= ")";
+				$sql .= " SELECT";
+				$sql .= " entity";
+				$sql .= ", ".((int) $toId);
+				$sql .= ", fk_soc";
+				$sql .= ", '".$this->db->idate($now)."'";
+				$sql .= ", price";
+				$sql .= ", price_ttc";
+				$sql .= ", price_min";
+				$sql .= ", price_min_ttc";
+				$sql .= ", price_base_type";
+				$sql .= ", default_vat_code";
+				$sql .= ", tva_tx";
+				$sql .= ", recuperableonly";
+				$sql .= ", localtax1_tx";
+				$sql .= ", localtax1_type";
+				$sql .= ", localtax2_tx";
+				$sql .= ", localtax2_type";
+				$sql .= ", ".((int) $user->id);
+				$sql .= " FROM ".$this->db->prefix()."product_customer_price pc";
+				$sql .= " WHERE pc.fk_product = ".((int) $fromId);
+				$sql .= " AND pc.datec IN (";
+				$sql .= " SELECT MAX(pd.datec)";
+				$sql .= " FROM ".$this->db->prefix()."product_customer_price pd";
+				$sql .= " WHERE pd.fk_product = ".((int) $fromId);
+				$sql .= " AND pd.fk_soc = pc.fk_soc";
+				$sql .= " )";
+
+				dol_syslog(__METHOD__, LOG_DEBUG);
+
+				$resql = $this->db->query($sql);
+				if (!$resql) {
+					$this->db->rollback();
+					return -1;
+				}
+				$this->db->free($resql);
+
+				// Add of customer price extrafields
+				// fetch optionals attributes and labels
+				require_once DOL_DOCUMENT_ROOT . '/core/class/extrafields.class.php';
+				$extrafields = new ExtraFields($this->db);
+				$extrafields->fetch_name_optionals_label($object->table_element);
+
+				// Retrieving the list of extrafields
+				$sql_fields = "SHOW COLUMNS FROM ".MAIN_DB_PREFIX."product_customer_price_extrafields";
+				$res_fields = $this->db->query($sql_fields);
+				if (!$res_fields) {
+					$this->db->rollback();
+					return -1;
+				}
+				$fields = array();
+				while ($field = $this->db->fetch_object($res_fields)) {
+					if (!in_array($field->Field, array('rowid', 'tms', 'fk_object'))) {
+						$fields[] = $field->Field;
+					}
+				}
+				if (!empty($fields)) {
+					if (!empty($extrafields)) {
+						// Matching old price, new price
+						$sql  = "SELECT";
+						$sql .= " oldp.rowid AS old_price_id,";
+						$sql .= " newp.rowid AS new_price_id";
+						$sql .= " FROM ".MAIN_DB_PREFIX."product_customer_price AS oldp";
+						$sql .= " INNER JOIN ".MAIN_DB_PREFIX."product_customer_price AS newp";
+						$sql .= " ON newp.fk_soc = oldp.fk_soc";
+						$sql .= " WHERE oldp.fk_product = ".((int) $fromId);
+						$sql .= " AND newp.fk_product = ".((int) $toId);
+						$sql .= " AND newp.datec = '".$this->db->idate($now)."'";
+						$resql = $this->db->query($sql);
+						if (!$resql) {
+							$this->db->rollback();
+							return -1;
+						}
+						while ($obj = $this->db->fetch_object($resql)) {
+							$sql_copy  = "INSERT INTO ".MAIN_DB_PREFIX."product_customer_price_extrafields";
+							$sql_copy .= " (fk_object";
+							foreach ($fields as $field) {
+								$sql_copy .= ",".$field;
+							}
+							$sql_copy .= ")";
+							$sql_copy .= " SELECT ";
+							$sql_copy .= ((int) $obj->new_price_id);
+							foreach ($fields as $field) {
+								$sql_copy .= ",".$field;
+							}
+							$sql_copy .= " FROM ".MAIN_DB_PREFIX."product_customer_price_extrafields";
+							$sql_copy .= " WHERE fk_object = ".((int) $obj->old_price_id);
+							$resql_copy = $this->db->query($sql_copy);
+							if (!$resql_copy) {
+								$this->db->rollback();
+								return -1;
+							}
+						}
+						$this->db->free($resql);
+						$this->db->free($resql_copy);
+					}
+				}
+
+				$this->db->free($res_fields);
+			}
+		} elseif(getDolGlobalString('PRODUIT_CUSTOMER_PRICES_AND_MULTIPRICES')) {
+			// Add of level price extrafields
+			// fetch optionals attributes and labels
+			require_once DOL_DOCUMENT_ROOT . '/core/class/extrafields.class.php';
+			$extrafields = new ExtraFields($this->db);
+			$extrafields->fetch_name_optionals_label($object->table_element);
+
+			// Retrieving the list of extrafields
+			$sql_fields = "SHOW COLUMNS FROM ".MAIN_DB_PREFIX."product_price_extrafields";
+			$res_fields = $this->db->query($sql_fields);
+			if (!$res_fields) {
+				$this->db->rollback();
+				return -1;
+			}
+			$fields = array();
+			while ($field = $this->db->fetch_object($res_fields)) {
+				if (!in_array($field->Field, array('rowid', 'tms', 'fk_object'))) {
+					$fields[] = $field->Field;
+				}
+			}
+			if (!empty($fields)) {
+				if (!empty($extrafields)) {
+					// Matching old price, new price
+					$sql  = "SELECT";
+					$sql .= " oldp.rowid AS old_price_id,";
+					$sql .= " newp.rowid AS new_price_id";
+					$sql .= " FROM ".MAIN_DB_PREFIX."product_price AS oldp";
+					$sql .= " INNER JOIN ".MAIN_DB_PREFIX."product_price AS newp";
+					$sql .= " ON newp.price_level = oldp.price_level";
+					$sql .= " WHERE oldp.fk_product = ".((int) $fromId);
+					$sql .= " AND newp.fk_product = ".((int) $toId);
+					$sql .= " AND newp.date_price = '".$this->db->idate($now)."'";
+					$resql = $this->db->query($sql);
+					if (!$resql) {
+						$this->db->rollback();
+						return -1;
+					}
+					while ($obj = $this->db->fetch_object($resql)) {
+						$sql_copy  = "INSERT INTO ".MAIN_DB_PREFIX."product_price_extrafields";
+						$sql_copy .= " (fk_object";
+						foreach ($fields as $field) {
+							$sql_copy .= ",".$field;
+						}
+						$sql_copy .= ")";
+						$sql_copy .= " SELECT ";
+						$sql_copy .= ((int) $obj->new_price_id);
+						foreach ($fields as $field) {
+							$sql_copy .= ",".$field;
+						}
+						$sql_copy .= " FROM ".MAIN_DB_PREFIX."product_price_extrafields";
+						$sql_copy .= " WHERE fk_object = ".((int) $obj->old_price_id);
+						$resql_copy = $this->db->query($sql_copy);
+						if (!$resql_copy) {
+							$this->db->rollback();
+							return -1;
+						}
+					}
+
+					$this->db->free($resql);
+					$this->db->free($resql_copy);
+				}
+			}
+			$this->db->free($res_fields);
+
+			// Price per customer
+			$sql  = "INSERT INTO ".$this->db->prefix()."product_customer_price (";
+			$sql .= " entity";
+			$sql .= ", fk_product";
+			$sql .= ", fk_soc";
+			$sql .= ", datec";
+			$sql .= ", price";
+			$sql .= ", price_ttc";
+			$sql .= ", price_min";
+			$sql .= ", price_min_ttc";
+			$sql .= ", price_base_type";
+			$sql .= ", default_vat_code";
+			$sql .= ", tva_tx";
+			$sql .= ", recuperableonly";
+			$sql .= ", localtax1_tx";
+			$sql .= ", localtax1_type";
+			$sql .= ", localtax2_tx";
+			$sql .= ", localtax2_type";
+			$sql .= ", fk_user";
+			$sql .= ")";
+			$sql .= " SELECT";
+			$sql .= " entity";
+			$sql .= ", ".((int) $toId);
+			$sql .= ", fk_soc";
+			$sql .= ", '".$this->db->idate($now)."'";
+			$sql .= ", price";
+			$sql .= ", price_ttc";
+			$sql .= ", price_min";
+			$sql .= ", price_min_ttc";
+			$sql .= ", price_base_type";
+			$sql .= ", default_vat_code";
+			$sql .= ", tva_tx";
+			$sql .= ", recuperableonly";
+			$sql .= ", localtax1_tx";
+			$sql .= ", localtax1_type";
+			$sql .= ", localtax2_tx";
+			$sql .= ", localtax2_type";
+			$sql .= ", ".((int) $user->id);
+			$sql .= " FROM ".$this->db->prefix()."product_customer_price pc";
+			$sql .= " WHERE pc.fk_product = ".((int) $fromId);
+			$sql .= " AND pc.datec IN (";
+			$sql .= " SELECT MAX(pd.datec)";
+			$sql .= " FROM ".$this->db->prefix()."product_customer_price pd";
+			$sql .= " WHERE pd.fk_product = ".((int) $fromId);
+			$sql .= " AND pd.fk_soc = pc.fk_soc";
+			$sql .= " )";
+
+			dol_syslog(__METHOD__, LOG_DEBUG);
+
+			$resql = $this->db->query($sql);
+			if (!$resql) {
+				$this->db->rollback();
+				return -1;
+			}
+			$this->db->free($resql);
+
+			// Add of customer price extrafields
+			// fetch optionals attributes and labels
+			require_once DOL_DOCUMENT_ROOT . '/core/class/extrafields.class.php';
+			$extrafields = new ExtraFields($this->db);
+			$extrafields->fetch_name_optionals_label($object->table_element);
+
+			// Retrieving the list of extrafields
+			$sql_fields = "SHOW COLUMNS FROM ".MAIN_DB_PREFIX."product_customer_price_extrafields";
+			$res_fields = $this->db->query($sql_fields);
+			if (!$res_fields) {
+				$this->db->rollback();
+				return -1;
+			}
+			$fields = array();
+			while ($field = $this->db->fetch_object($res_fields)) {
+				if (!in_array($field->Field, array('rowid', 'tms', 'fk_object'))) {
+					$fields[] = $field->Field;
+				}
+			}
+			if (!empty($fields)) {
+				if (!empty($extrafields)) {
+					// Matching old price, new price
+					$sql  = "SELECT";
+					$sql .= " oldp.rowid AS old_price_id,";
+					$sql .= " newp.rowid AS new_price_id";
+					$sql .= " FROM ".MAIN_DB_PREFIX."product_customer_price AS oldp";
+					$sql .= " INNER JOIN ".MAIN_DB_PREFIX."product_customer_price AS newp";
+					$sql .= " ON newp.fk_soc = oldp.fk_soc";
+					$sql .= " WHERE oldp.fk_product = ".((int) $fromId);
+					$sql .= " AND newp.fk_product = ".((int) $toId);
+					$sql .= " AND newp.datec = '".$this->db->idate($now)."'";
+					$resql = $this->db->query($sql);
+					if (!$resql) {
+						$this->db->rollback();
+						return -1;
+					}
+					while ($obj = $this->db->fetch_object($resql)) {
+						$sql_copy  = "INSERT INTO ".MAIN_DB_PREFIX."product_customer_price_extrafields";
+						$sql_copy .= " (fk_object";
+						foreach ($fields as $field) {
+							$sql_copy .= ",".$field;
+						}
+						$sql_copy .= ")";
+						$sql_copy .= " SELECT ";
+						$sql_copy .= ((int) $obj->new_price_id);
+						foreach ($fields as $field) {
+							$sql_copy .= ",".$field;
+						}
+						$sql_copy .= " FROM ".MAIN_DB_PREFIX."product_customer_price_extrafields";
+						$sql_copy .= " WHERE fk_object = ".((int) $obj->old_price_id);
+						$resql_copy = $this->db->query($sql_copy);
+						if (!$resql_copy) {
+							$this->db->rollback();
+							return -1;
+						}
+					}
+					$this->db->free($resql);
+					$this->db->free($resql_copy);
+				}
+			}
+			$this->db->free($res_fields);
 		}
 
 		$this->db->commit();
